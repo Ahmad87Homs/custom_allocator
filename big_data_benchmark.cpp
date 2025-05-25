@@ -84,8 +84,23 @@ static void BM_CustomAllocatorMapInsert(benchmark::State& state) {
         std::map<timeStampType, BigData, std::less<timeStampType>,
             ArenaAllocator<std::pair<const timeStampType, BigData>>> buffer;
 
-        for (int i = 0; i < state.range(0); ++i) {
+        buffer.emplace(0, BigData());
+        buffer.emplace(1, BigData());
+        buffer.emplace(2, BigData());
+        buffer.emplace(3, BigData());
+        buffer.emplace(4, BigData());
+        buffer.emplace(5, BigData());
+        buffer.emplace(6, BigData());
+        buffer.emplace(7, BigData());
+        buffer.emplace(8, BigData());
+        buffer.emplace(9, BigData());
+        for (int i = 10; i < state.range(0)+10; ++i) {
             buffer.emplace(i, BigData());
+            if (!buffer.empty()){
+            buffer.erase(buffer.begin());
+            if (!buffer.empty())
+            buffer.erase(buffer.begin());
+        }
         }
     }
 }
@@ -95,8 +110,23 @@ BENCHMARK(BM_CustomAllocatorMapInsert)->Arg(10)->Arg(50)->Arg(100);
 static void BM_DefaultAllocatorMapInsert(benchmark::State& state) {
     for (auto _ : state) {
         std::map<timeStampType, BigData> buffer;
-        for (int i = 0; i < state.range(0); ++i) {
+        buffer.emplace(0, BigData());
+        buffer.emplace(1, BigData());
+        buffer.emplace(2, BigData());
+        buffer.emplace(3, BigData());
+        buffer.emplace(4, BigData());
+        buffer.emplace(5, BigData());
+        buffer.emplace(6, BigData());
+        buffer.emplace(7, BigData());
+        buffer.emplace(8, BigData());
+        buffer.emplace(9, BigData());
+        for (int i = 10; i < state.range(0)+10; ++i) {
             buffer.emplace(i, BigData());
+            if (!buffer.empty()){
+            buffer.erase(buffer.begin());
+            if (!buffer.empty())
+            buffer.erase(buffer.begin());
+        }
         }
     }
 }
