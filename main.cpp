@@ -46,155 +46,99 @@ struct BigData {
   BigData &operator=(BigData &&) noexcept = default;
 };
 
-// --- Custom Allocator: ArenaAllocator ---
-template <typename T, std::size_t ArenaSize = kAreanaSize>
+// ArenaAllocator definition
+template <typename T, std::size_t ArenaSize = 10>
 class ArenaAllocator {
 public:
-  // Standard allocator type definitions
   using value_type = T;
-  using pointer = T *;
-  using const_pointer = const T *;
-  using reference = T &;
-  using const_reference = const T &;
-  using size_type = std::size_t;
-  using difference_type = std::ptrdiff_t;
-
-  // Constructors are noexcept as they don't allocate or throw
-  ArenaAllocator() noexcept = default;
+  using pointer = T*;
 
   template <typename U>
-  ArenaAllocator(const ArenaAllocator<U, ArenaSize> &) noexcept {}
+  struct rebind {
+    using other = ArenaAllocator<U, ArenaSize>;
+  };
 
-  // allocate: Allocates memory for n objects of type T
-  // Can throw std::bad_alloc if n != 1 or dynamic allocation fails.
-  T *allocate(std::size_t n) {
-    // We only support single-element allocations for our arena pool.
-    // std::map's nodes will request n=1.
-    if (n != 1) {
-      std::cout << "[ERROR] ArenaAllocator: Requested " << n
-                << " elements. Only n=1 is supported directly by arena.\n";
-      throw std::bad_alloc(); // Or fall back to dynamic allocation if preferred
+  ArenaAllocator() noexcept {}
+  template <typename U>
+  ArenaAllocator(const ArenaAllocator<U, ArenaSize>&) noexcept {}
+
+  T* allocate(std::size_t n) {
+    if (n != 1) throw std::bad_alloc();
+
+    if (freeListTop_ > 0) {
+      T* ptr = freeList_[--freeListTop_];
+      std::cout << "Allocate [Arena Reuse]: " << static_cast<void*>(ptr) << "\n";
+      return ptr;
     }
 
-    // Try to get a pointer from the freelist (reused arena slot)
-    if (!freeList_.empty()) {
-      std::lock_guard<std::mutex> lock(s_mutex_); // Protect freelist access
-      if (!freeList_.empty()) { // Double-check after acquiring lock
-        T *ptr = freeList_.top();
-        freeList_.pop();
-        std::cout << "Allocate [Arena Reuse]: " << std::showbase << std::hex
-                  << ptr << std::dec << "\n";
-        return ptr;
-      }
-    }
-
-    // If freelist is empty, try to allocate a new slot from the arena's
-    // contiguous block
     if (arenaIndex_ < ArenaSize) {
-      std::lock_guard<std::mutex> lock(
-          s_mutex_);                 // Protect arenaIndex_ and arena_ access
-      if (arenaIndex_ < ArenaSize) { // Double-check after acquiring lock
-        T *ptr = reinterpret_cast<T *>(&arena_[arenaIndex_++]);
-        std::cout << "Allocate [Arena New]: " << std::showbase << std::hex
-                  << ptr << std::dec << " (Index: " << arenaIndex_ - 1 << ")\n";
-        return ptr;
-      }
+      T* ptr = reinterpret_cast<T*>(&arena_[arenaIndex_++]);
+      std::cout << "Allocate [Arena New]: " << static_cast<void*>(ptr) << "\n";
+      return ptr;
     }
 
-    // If both arena reuse and new arena slots are exhausted, fall back to
-    // dynamic allocation
-    T *ptr = static_cast<T *>(::operator new(sizeof(T)));
-    if (!ptr) {
-      throw std::bad_alloc(); // operator new can throw itself, but explicit
-                              // check is fine.
-    }
-    std::cout << "Allocate [Dynamic]: " << std::showbase << std::hex << ptr
-              << std::dec << "\n";
+    T* ptr = static_cast<T*>(::operator new(sizeof(T)));
+    std::cout << "Allocate [Dynamic]: " << static_cast<void*>(ptr) << "\n";
     return ptr;
   }
 
-  // deallocate: Deallocates memory. This method should not throw.
-  void deallocate(T *p, std::size_t n) noexcept {
-    if (p == nullptr || n == 0)
-      return; // Nothing to deallocate
+  void deallocate(T* p, std::size_t n) noexcept {
+    if (!p || n == 0) return;
 
-    // Protect static members during deallocation
-    std::lock_guard<std::mutex> lock(s_mutex_);
-
-    // Check if the pointer 'p' belongs to our arena
     if (is_in_arena(p)) {
-      freeList_.push(p); // Add to freelist for reuse
-      std::cout << "Deallocate [Arena]: " << std::showbase << std::hex << p
-                << std::dec << "\n";
+      if (freeListTop_ < ArenaSize) {
+        freeList_[freeListTop_++] = p;
+        std::cout << "Deallocate [Arena]: " << static_cast<void*>(p) << "\n";
+      } else {
+        std::cout << "[Warning] Arena free list overflow!\n";
+      }
     } else {
-      // It was dynamically allocated, free it using global delete
-      std::cout << "Deallocate [Dynamic]: " << std::showbase << std::hex << p
-                << std::dec << "\n";
+      std::cout << "Deallocate [Dynamic]: " << static_cast<void*>(p) << "\n";
       ::operator delete(p);
     }
   }
 
-  // Required for containers to rebind the allocator for different types (e.g.,
-  // node types)
-  template <typename U> struct rebind {
-    typedef ArenaAllocator<U, ArenaSize> other;
-  };
-
-  // Equality operators: All instances of this allocator are equal as they share
-  // static resources.
-  template <typename U, std::size_t N>
-  friend bool operator==(const ArenaAllocator &, const ArenaAllocator<U, N> &) {
-    return true;
+  template <typename U, typename... Args>
+  void construct(U* p, Args&&... args) {
+    ::new (static_cast<void*>(p)) U(std::forward<Args>(args)...);
   }
 
-  template <typename U, std::size_t N>
-  friend bool operator!=(const ArenaAllocator &, const ArenaAllocator<U, N> &) {
-    return false;
+  template <typename U>
+  void destroy(U* p) {
+    p->~U();
   }
+
+  bool operator==(const ArenaAllocator&) const noexcept { return true; }
+  bool operator!=(const ArenaAllocator&) const noexcept { return false; }
 
 private:
-  // --- Static Members (shared across all instances of ArenaAllocator<T,
-  // ArenaSize>) --- Use std::aligned_storage for proper alignment of raw memory
-  typedef
-      typename std::aligned_storage<sizeof(T), alignof(T)>::type StorageType;
+  using StorageType = typename std::aligned_storage<sizeof(T), alignof(T)>::type;
 
-  // The raw memory arena.
-  static StorageType arena_[ArenaSize];
-  // Index for next available slot in the arena (for initial allocations).
-  static std::atomic<std::size_t>
-      arenaIndex_; // Using atomic for thread-safe increment
-  // Stack of pointers to freed arena slots for reuse.
-  static std::stack<T *> freeList_;
-  // Mutex for protecting access to arenaIndex_ and freeList_.
-  static std::mutex s_mutex_;
-
-  // Helper to check if a pointer is within the arena's memory range
-  bool is_in_arena(void *p) const noexcept {
-    // Cast to uintptr_t for safe pointer arithmetic and comparison
-    uintptr_t begin = reinterpret_cast<uintptr_t>(&arena_[0]);
-    uintptr_t end =
-        reinterpret_cast<uintptr_t>(&arena_[ArenaSize]); // One past the end
-    uintptr_t addr = reinterpret_cast<uintptr_t>(p);
+  static bool is_in_arena(T* p) {
+    auto begin = reinterpret_cast<std::uintptr_t>(&arena_[0]);
+    auto end = reinterpret_cast<std::uintptr_t>(&arena_[ArenaSize]);
+    auto addr = reinterpret_cast<std::uintptr_t>(p);
     return addr >= begin && addr < end;
   }
+
+  static StorageType arena_[ArenaSize];
+  static std::size_t arenaIndex_;
+  static T* freeList_[ArenaSize];
+  static std::size_t freeListTop_;
 };
 
-// --- Definition of Static Members (must be defined outside the class template)
-// ---
+// Static members initialization
 template <typename T, std::size_t ArenaSize>
-typename ArenaAllocator<T, ArenaSize>::StorageType
-    ArenaAllocator<T, ArenaSize>::arena_[ArenaSize];
+typename ArenaAllocator<T, ArenaSize>::StorageType ArenaAllocator<T, ArenaSize>::arena_[ArenaSize];
 
 template <typename T, std::size_t ArenaSize>
-std::atomic<std::size_t> ArenaAllocator<T, ArenaSize>::arenaIndex_ =
-    0; // Initialize atomic
+std::size_t ArenaAllocator<T, ArenaSize>::arenaIndex_ = 0;
 
 template <typename T, std::size_t ArenaSize>
-std::stack<T *> ArenaAllocator<T, ArenaSize>::freeList_;
+T* ArenaAllocator<T, ArenaSize>::freeList_[ArenaSize] = {nullptr};
 
 template <typename T, std::size_t ArenaSize>
-std::mutex ArenaAllocator<T, ArenaSize>::s_mutex_;
-
+std::size_t ArenaAllocator<T, ArenaSize>::freeListTop_ = 0;
 // --- Convenience Type Alias for the Map ---
 // Makes it easier to declare your map with the custom allocator.
 // std::map's node type is std::pair<const Key, Value>.

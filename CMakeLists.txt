@@ -17,7 +17,7 @@ find_package(benchmark REQUIRED)
 # add_executable(${PROJECT_NAME} benchmark.cpp)
 
 
-add_executable(${PROJECT_NAME} big_data_benchmark.cpp)
+add_executable(${PROJECT_NAME} big_data_benchmark_static.cpp)
 add_executable(${EXECUTABLE} main.cpp)
 
 target_link_libraries(${PROJECT_NAME} benchmark::benchmark_main)
