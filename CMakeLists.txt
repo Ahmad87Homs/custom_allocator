@@ -6,7 +6,11 @@ SET(BUILD_MODE Debug)
 SET(CMAKE_CXX_FLAGS "-Wall")
 SET(CMAKE_CXX_FLAGS_DEBUG "-g")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O3")
-SET(EXECUTABLE "allocator")
+
+SET(STATIC_BENCHMARK "static_allocator")
+SET(STATIC_EXECUTABLE "static_allocator_profiling")
+SET(DYNAMIC_BENCHMARK "dynamic_allocator_profiling")
+SET(DYNAMIC_EXECUTABLE "dynamic_allocator")
 
 project(profiling)
 
@@ -17,7 +21,10 @@ find_package(benchmark REQUIRED)
 # add_executable(${PROJECT_NAME} benchmark.cpp)
 
 
-add_executable(${PROJECT_NAME} big_data_benchmark_static.cpp)
-add_executable(${EXECUTABLE} main.cpp)
+add_executable(${STATIC_BENCHMARK} Static/big_data_benchmark.cpp)
+add_executable(${STATIC_EXECUTABLE} Static/main.cpp)
+add_executable(${DYNAMIC_BENCHMARK} Dynamic/big_data_benchmark.cpp)
+add_executable(${DYNAMIC_EXECUTABLE} Dynamic/main.cpp)
 
-target_link_libraries(${PROJECT_NAME} benchmark::benchmark_main)
+target_link_libraries(${STATIC_BENCHMARK} benchmark::benchmark_main)
+target_link_libraries(${DYNAMIC_BENCHMARK} benchmark::benchmark_main)
